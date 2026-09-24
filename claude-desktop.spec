@@ -1,7 +1,7 @@
-%global claude_version 1.28929.0
+%global claude_version 2.7032.0
 # Electron bundled by upstream (usr/lib/claude-desktop/version in the .deb).
 # Informational only — we no longer download Electron ourselves.
-%global electron_ver   42.7.0
+%global electron_ver   44.4.3
 
 # The Debian package name for the arch we are building. Anthropic publishes
 # amd64 and arm64 only, which is what ExclusiveArch below restricts us to.
@@ -77,16 +77,18 @@ Requires:       libXtst
 Requires:       systemd-libs
 Requires:       xdg-utils
 Requires:       xdg-desktop-portal
+# Upstream now hard-depends on one portal backend (gtk | gnome | kde).
+Requires:       (xdg-desktop-portal-gtk or xdg-desktop-portal-gnome or xdg-desktop-portal-kde)
 
 # Debian Recommends mapped to Fedora. None of these are needed to start the
-# app: the portal backend for native file dialogs, appindicator for the tray,
-# a keyring for credential storage, gvfs so "move to trash" works, and qemu +
+# app: appindicator for the tray, a keyring for credential storage, gvfs so
+# "move to trash" works, gjs for the GNOME Shell search provider, and qemu +
 # firmware for the Cowork VM (upstream ships the disk image and virtiofsd).
-Recommends:     xdg-desktop-portal-gtk
 Recommends:     libayatana-appindicator-gtk3
 Recommends:     gnome-keyring
 Recommends:     ca-certificates
 Recommends:     gvfs
+Recommends:     gjs
 %ifarch x86_64
 Recommends:     qemu-system-x86-core
 Recommends:     edk2-ovmf
@@ -166,6 +168,21 @@ for size in 16 32 48 128 256; do
         %{buildroot}%{_datadir}/icons/hicolor/${size}x${size}/apps/%{name}.png
 done
 
+# --- GNOME Shell search provider -------------------------------------------
+# Upstream's postinst copies these two registration files out of resources/
+# at install time; shipping them as package files lets rpm own and remove
+# them. The D-Bus service hardcodes /usr/lib/claude-desktop, so point it at
+# the relocated tree (the in-tree copy stays verbatim).
+_gsp="$_src"/lib/claude-desktop/resources/gnome-search-provider
+install -Dm644 "$_gsp"/com.anthropic.Claude.search-provider.ini \
+    %{buildroot}%{_datadir}/gnome-shell/search-providers/com.anthropic.Claude.search-provider.ini
+install -Dm644 "$_gsp"/com.anthropic.Claude.SearchProvider.service \
+    %{buildroot}%{_datadir}/dbus-1/services/com.anthropic.Claude.SearchProvider.service
+sed -i 's|/usr/lib/claude-desktop/|%{_libdir}/%{name}/|' \
+    %{buildroot}%{_datadir}/dbus-1/services/com.anthropic.Claude.SearchProvider.service
+grep -q '^Exec=.*%{_libdir}/%{name}/resources/gnome-search-provider/searchProvider.js$' \
+    %{buildroot}%{_datadir}/dbus-1/services/com.anthropic.Claude.SearchProvider.service
+
 # ---------------------------------------------------------------------------
 # Deliberately not carried over from the .deb's maintainer scripts:
 #
@@ -182,6 +199,8 @@ done
 %{_libdir}/%{name}
 %{_datadir}/applications/com.anthropic.Claude.desktop
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
+%{_datadir}/gnome-shell/search-providers/com.anthropic.Claude.search-provider.ini
+%{_datadir}/dbus-1/services/com.anthropic.Claude.SearchProvider.service
 
 %post
 update-desktop-database %{_datadir}/applications &>/dev/null || :
@@ -197,6 +216,13 @@ fi
 gtk-update-icon-cache -f -t %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
+* Thu Sep 24 2026 Claude Desktop Linux Maintainers - 2.7032.0-1
+- update to Claude Desktop 2.7032.0 (Electron 44.4.3, bundled upstream)
+- require one xdg-desktop-portal backend (gtk, gnome or kde), matching
+  upstream's new hard dependency
+- ship upstream's new GNOME Shell search provider registration, with the
+  D-Bus service pointed at %%{_libdir}; recommend gjs to run it
+
 * Wed Aug 12 2026 Claude Desktop Linux Maintainers - 1.28929.0-1
 - repackage Anthropic's official Linux .deb instead of the Windows installer
 - update to Claude Desktop 1.28929.0 (Electron 42.7.0, both bundled upstream)

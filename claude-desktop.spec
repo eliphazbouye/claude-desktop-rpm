@@ -1,7 +1,7 @@
-%global claude_version 2.7032.0
+%global claude_version 5.11492.5
 # Electron bundled by upstream (usr/lib/claude-desktop/version in the .deb).
 # Informational only — we no longer download Electron ourselves.
-%global electron_ver   44.4.3
+%global electron_ver   45.2.1
 
 # The Debian package name for the arch we are building. Anthropic publishes
 # amd64 and arm64 only, which is what ExclusiveArch below restricts us to.
@@ -74,6 +74,8 @@ Requires:       libXext
 Requires:       libXfixes
 Requires:       libXrandr
 Requires:       libXtst
+# Linked by the native binding (resources/app.asar.unpacked/.../claude-native-binding.node).
+Requires:       pipewire-libs
 Requires:       systemd-libs
 Requires:       xdg-utils
 Requires:       xdg-desktop-portal
@@ -82,13 +84,18 @@ Requires:       (xdg-desktop-portal-gtk or xdg-desktop-portal-gnome or xdg-deskt
 
 # Debian Recommends mapped to Fedora. None of these are needed to start the
 # app: appindicator for the tray, a keyring for credential storage, gvfs so
-# "move to trash" works, gjs for the GNOME Shell search provider, and qemu +
-# firmware for the Cowork VM (upstream ships the disk image and virtiofsd).
+# "move to trash" works, gjs for the GNOME Shell search provider, bubblewrap,
+# socat and an ssh client for Claude Code sandboxing and SSH remotes, and
+# qemu + firmware for the Cowork VM (upstream ships the disk image and
+# virtiofsd).
 Recommends:     libayatana-appindicator-gtk3
 Recommends:     gnome-keyring
 Recommends:     ca-certificates
 Recommends:     gvfs
 Recommends:     gjs
+Recommends:     bubblewrap
+Recommends:     socat
+Recommends:     openssh-clients
 %ifarch x86_64
 Recommends:     qemu-system-x86-core
 Recommends:     edk2-ovmf
@@ -183,6 +190,13 @@ sed -i 's|/usr/lib/claude-desktop/|%{_libdir}/%{name}/|' \
 grep -q '^Exec=.*%{_libdir}/%{name}/resources/gnome-search-provider/searchProvider.js$' \
     %{buildroot}%{_datadir}/dbus-1/services/com.anthropic.Claude.SearchProvider.service
 
+# --- MIME types -------------------------------------------------------------
+# .mcpb, .dxt and .skill, which the desktop entry claims. Upstream's postinst
+# copies this into the shared-mime-info database at install time; as a package
+# file, Fedora's shared-mime-info file trigger rebuilds the cache for us.
+install -Dm644 "$_src"/lib/claude-desktop/resources/linux-mime/com.anthropic.Claude.xml \
+    %{buildroot}%{_datadir}/mime/packages/com.anthropic.Claude.xml
+
 # ---------------------------------------------------------------------------
 # Deliberately not carried over from the .deb's maintainer scripts:
 #
@@ -190,7 +204,9 @@ grep -q '^Exec=.*%{_libdir}/%{name}/resources/gnome-search-provider/searchProvid
 #     rebuilding this spec, and writing /etc/apt on a dnf system is wrong;
 #   * the AppArmor "unconfined" profile, which only exists to re-allow
 #     unprivileged user namespaces on Ubuntu 24.04+. Fedora does not restrict
-#     them, and confinement here is SELinux's job.
+#     them, and confinement here is SELinux's job;
+#   * the /usr/bin/ccd link, which postinst creates only when the build ships
+#     resources/bin/ccd. This one does not; ship it as a symlink once it does.
 # ---------------------------------------------------------------------------
 
 %files
@@ -201,6 +217,7 @@ grep -q '^Exec=.*%{_libdir}/%{name}/resources/gnome-search-provider/searchProvid
 %{_datadir}/icons/hicolor/*/apps/%{name}.png
 %{_datadir}/gnome-shell/search-providers/com.anthropic.Claude.search-provider.ini
 %{_datadir}/dbus-1/services/com.anthropic.Claude.SearchProvider.service
+%{_datadir}/mime/packages/com.anthropic.Claude.xml
 
 %post
 update-desktop-database %{_datadir}/applications &>/dev/null || :
@@ -216,6 +233,13 @@ fi
 gtk-update-icon-cache -f -t %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
+* Sat Nov 14 2026 Claude Desktop Linux Maintainers - 5.11492.5-1
+- update to Claude Desktop 5.11492.5 (Electron 45.2.1, bundled upstream)
+- require pipewire-libs, which the native binding now links against
+- recommend bubblewrap, socat and openssh-clients, matching upstream
+- ship upstream's new shared-mime-info definitions for .mcpb, .dxt and
+  .skill files
+
 * Thu Sep 24 2026 Claude Desktop Linux Maintainers - 2.7032.0-1
 - update to Claude Desktop 2.7032.0 (Electron 44.4.3, bundled upstream)
 - require one xdg-desktop-portal backend (gtk, gnome or kde), matching

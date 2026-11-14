@@ -1,0 +1,121 @@
+name: Upstream update
+
+# Daily check of Anthropic's apt repository. When a newer Claude Desktop is
+# out, open a PR that bumps the spec, with a report of the upstream changes
+# to review, and test-build that PR in Fedora for both arches.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-update
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.pr.outputs.branch }}
+      pr: ${{ steps.pr.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check upstream and bump the spec
+        id: check
+        run: scripts/check-upstream.sh "$RUNNER_TEMP/report.md"
+
+      - name: Open pull request
+        id: pr
+        if: steps.check.outputs.update == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          branch="upstream-update/$VERSION"
+          # One PR per version: a later run leaves an open (or closed) one alone.
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "Branch $branch already exists, nothing to do."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git commit -am "Update to Claude Desktop $VERSION"
+          git push origin "$branch"
+          # PR bodies are capped at 65536 characters.
+          head -c 60000 "$RUNNER_TEMP/report.md" > "$RUNNER_TEMP/body.md"
+          url=$(gh pr create --base "${{ github.event.repository.default_branch }}" --head "$branch" \
+            --title "Update to Claude Desktop $VERSION" --body-file "$RUNNER_TEMP/body.md")
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+  # Pushes made with GITHUB_TOKEN do not trigger other workflows, so the test
+  # build runs here rather than on pull_request.
+  build:
+    needs: check
+    if: needs.check.outputs.pr != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: fedora:latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install build tools
+        run: dnf -y install git gh rpm-build rpmdevtools desktop-file-utils
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.branch }}
+
+      - name: Build the RPM
+        run: |
+          set -o pipefail
+          spectool -g -R claude-desktop.spec
+          rpmbuild -bb claude-desktop.spec 2>&1 | tee build.log
+
+      # Installing resolves every Requires against Fedora's repositories, and
+      # ldd then catches a system library the binaries need but no Requires
+      # pulls in.
+      - name: Install it and check linked libraries
+        run: |
+          dnf -y install ~/rpmbuild/RPMS/${{ matrix.arch }}/claude-desktop-*.rpm 2>&1 | tee install.log
+          find /usr/lib64/claude-desktop -type f \( -perm -u+x -o -name '*.so*' -o -name '*.node' \) \
+            -exec sh -c 'ldd "$1" 2>/dev/null | grep "not found" | sed "s|^|$1: |"' _ {} \; | tee missing.log
+          test ! -s missing.log
+
+      - name: Report on the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            if [ "${{ job.status }}" = success ]; then
+              echo "✅ Fedora ${{ matrix.arch }}: RPM builds, installs and finds all its libraries."
+            else
+              echo "❌ Fedora ${{ matrix.arch }}: test build failed. [Run log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+              for log in missing.log install.log build.log; do
+                [ -s "$log" ] || continue
+                echo
+                echo "<details><summary>$log (last 40 lines)</summary>"
+                echo
+                echo '```'
+                tail -n 40 "$log"
+                echo '```'
+                echo "</details>"
+              done
+            fi
+          } > comment.md
+          gh pr comment "${{ needs.check.outputs.pr }}" --repo "$GITHUB_REPOSITORY" --body-file comment.md

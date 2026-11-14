@@ -86,6 +86,14 @@ entry, and rebuild. If upstream also bumps Electron, the new version is in
 `usr/lib/claude-desktop/version` inside the `.deb` — it is recorded in the spec
 as `%global electron_ver` for the `bundled(electron)` provides.
 
+`scripts/check-upstream.sh` does all of that, and also writes a report of what
+changed upstream that the spec may need to follow: Depends/Recommends, the
+system libraries the binaries link against, the file layout and the
+maintainer scripts. The `Upstream update` GitHub workflow runs it daily; when
+there is a new version it opens a PR with the bump and the report, then
+test-builds and installs the RPM in Fedora on x86_64 and aarch64 and comments
+the result on the PR.
+
 ## Differences from the upstream `.deb`
 
 The application tree is installed bit-for-bit as upstream ships it, relocated

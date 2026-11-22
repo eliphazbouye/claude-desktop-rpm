@@ -1,7 +1,7 @@
-%global claude_version 5.11492.5
+%global claude_version 6.28899.6
 # Electron bundled by upstream (usr/lib/claude-desktop/version in the .deb).
 # Informational only — we no longer download Electron ourselves.
-%global electron_ver   45.2.1
+%global electron_ver   45.3.3
 
 # The Debian package name for the arch we are building. Anthropic publishes
 # amd64 and arm64 only, which is what ExclusiveArch below restricts us to.
@@ -233,6 +233,9 @@ fi
 gtk-update-icon-cache -f -t %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
+* Sun Nov 22 2026 Claude Desktop Linux Maintainers - 6.28899.6-1
+- update to Claude Desktop 6.28899.6 (Electron 45.3.3, bundled upstream)
+
 * Sat Nov 14 2026 Claude Desktop Linux Maintainers - 5.11492.5-1
 - update to Claude Desktop 5.11492.5 (Electron 45.2.1, bundled upstream)
 - require pipewire-libs, which the native binding now links against
